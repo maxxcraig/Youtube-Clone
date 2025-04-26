@@ -1,43 +1,65 @@
-import express from "express";
-import ffmeg from "fluent-ffmpeg";
+import express from 'express';
+
+import { 
+  uploadProcessedVideo,
+  downloadRawVideo,
+  deleteRawVideo,
+  deleteProcessedVideo,
+  convertVideo,
+  setupDirectories
+} from './storage';
+
+// Create the local directories for videos
+setupDirectories();
 
 const app = express();
 app.use(express.json());
 
-app.post("/process-video", (req, res)=> {
-    const inputFilePath = req.body.inputFilePath;
-    const outputFilePath = req.body.outputFilePath;
+// Process a video file from Cloud Storage into 360p
+app.post('/process-video', async (req, res) => {
 
-    console.log("inputFilePath:", inputFilePath);
-    console.log("outputFilePath:", outputFilePath);
-
-    if (!inputFilePath || !outputFilePath){
-        res.status(400).send("Bad Request: Missing file path.");
+  // Get the bucket and filename from the Cloud Pub/Sub message
+  let data;
+  try {
+    const message = Buffer.from(req.body.message.data, 'base64').toString('utf8');
+    data = JSON.parse(message);
+    if (!data.name) {
+      throw new Error('Invalid message payload received.');
     }
+  } catch (error) {
+    console.error(error);
+    return res.status(400).send('Bad Request: missing filename.');
+  }
 
-    ffmeg(inputFilePath)
-        .outputOptions("-vf", "scale=-1:360")//scales to 360p res
-        .on("end", ()=>{
-            res.status(200).send("Processing finished successfully!");
-        })
-        .on("error", (err: any)=> {
-        console.log(`An Error Occured: ${err.message}`); 
-        res.status(500).send(`Internal Server Error: ${err.message}`);
-        })
-        .save(outputFilePath);
-    
+  const inputFileName = data.name;
+  const outputFileName = `processed-${inputFileName}`;
 
+  // Download the raw video from Cloud Storage
+  await downloadRawVideo(inputFileName);
+
+  // Process the video into 360p
+  try { 
+    await convertVideo(inputFileName, outputFileName)
+  } catch (err) {
+    await Promise.all([
+      deleteRawVideo(inputFileName),
+      deleteProcessedVideo(outputFileName)
+    ]);
+    return res.status(500).send('Processing failed');
+  }
+  
+  // Upload the processed video to Cloud Storage
+  await uploadProcessedVideo(outputFileName);
+
+  await Promise.all([
+    deleteRawVideo(inputFileName),
+    deleteProcessedVideo(outputFileName)
+  ]);
+
+  return res.status(200).send('Processing finished successfully');
 });
 
-const port = process.env.PORT || 3000; 
-//checks if enviroment as default port 
-// assigned(when deplyed say on vercel 
-// they assign programs a port. if its 
-// assigned in env then stick with that, 
-// if not just go to 3000. important for 
-// once it's deployed but locally irrelvant) 
-
-app.listen(port, ()=> {
-    console.log(
-    `Video processing service listening at http://localhost:${port}`);
+const port = process.env.PORT || 3000;
+app.listen(port, () => {
+    console.log(`Server is running on port ${port}`);
 });
