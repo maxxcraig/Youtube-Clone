@@ -1,16 +1,16 @@
 # Stage 1: Build stage
 FROM node:18 AS builder
 
-# Set the working directory in the container to /app
+# Set working directory
 WORKDIR /app
 
-# Copy package.json and package-lock.json into the working directory
+# Copy package.json and package-lock.json
 COPY package*.json ./
 
-# Install any needed packages specified in package.json
-RUN npm install 
+# Install dependencies INCLUDING devDependencies (we need typescript for build)
+RUN npm install --include=dev
 
-# Bundle app source inside the docker image
+# Copy source code
 COPY . .
 
 # Build the app
@@ -19,23 +19,23 @@ RUN npm run build
 # Stage 2: Production stage
 FROM node:18
 
-# Install ffmpeg in the container
+# Install ffmpeg (for video processing)
 RUN apt-get update && apt-get install -y ffmpeg
 
-# Set the working directory
+# Set working directory
 WORKDIR /app
 
-# Copy package.json and package-lock.json
+# Copy only production files
 COPY package*.json ./
 
-# Install only production dependencies
+# Install ONLY production dependencies (no dev stuff in production)
 RUN npm install --only=production
 
-# Copy built app from the builder stage
+# Copy built app from builder stage
 COPY --from=builder /app/dist ./dist
 
-# Make port 3000 available to the world outside this container
+# Expose port 3000
 EXPOSE 3000
 
-# Define the command to run your app using CMD which defines your runtime
-CMD [ "npm", "run", "serve" ]
+# Start the app
+CMD ["npm", "run", "serve"]
